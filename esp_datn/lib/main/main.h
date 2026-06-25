@@ -1,17 +1,19 @@
-#ifndef MAIN_H
-#define MAIN_H
+#pragma once
+#include <Arduino.h>
+#include <Wire.h>
+#include "ads_1115.h"
+#include "mqtt_manager.h"
+#include "wifi_manager.h"
+#include "hrv.h"
+#include "pan_tompskins.h"
+#include "moving_average.h"
+// Cấu hình 250Hz: Gom 25 mẫu gửi 1 lần (tương đương 10 lần/giây)
+#define BATCH_SIZE 25 
 
-#include <wifi_manager.h>
-#include <mqtt_manager.h>
-#include<Arduino.h>
-#include<mpu6050.h>
-#include<ads_1115.h>
-#include<ecg_processing.h>
-
-#define SDA_PIN 8
-#define SCL_PIN 9
-
-
-
-
-#endif
+struct EcgBatch {
+    float ecg[BATCH_SIZE];
+    float hr;
+    float sdnn;
+    float rmssd;
+    float ibi;
+};

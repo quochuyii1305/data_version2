@@ -1,154 +1,62 @@
-// #include<ads_1115.h>
+#include "ads_1115.h"
 
-// void ads_write(uint8_t reg, uint16_t data){
-//     Wire.beginTransmission(ADD_ADS);
-//     Wire.write(reg);
-//     Wire.write((data >> 8) & 0xFF); // MSB
-//     Wire.write((data & 0xFF)); // LSB
-//     Wire.endTransmission();
-// }
-// void ads_read(uint8_t reg, uint8_t* buffer, uint8_t len){
-//     Wire.beginTransmission(ADD_ADS);
-//     Wire.write(reg);
-//     Wire.endTransmission(false);
+volatile bool ads_data_ready_flag = false;
 
-//     Wire.requestFrom((uint8_t)ADD_ADS,(uint8_t)len);
-
-//     for (int i = 0; i < len; i++)
-//     {
-//         if(Wire.available()){
-//             buffer[i] = Wire.read();
-//         }
-//     }
-    
-// }
-
-// void ads_init(){
-//     Wire.begin(8,9);
-// }
-
-// // doc raw adc
-
-// int16_t ads_read_raw(uint8_t channel){
-//     uint16_t config = 0;
-
-//     config |= (1 << 15);
-
-//     switch (channel)
-//     {
-//     case CHANEL_A0:
-//         config |= (0b100 << 12);
-//         break;
-//     case CHANEL_A1:
-//         config |= (0b101 << 12);
-//         break;
-//     case CHANEL_A2:
-//         config |= (0b110 << 12);
-//         break;
-//     case CHANEL_A3:
-//         config |= (0b111 << 12);
-//         break;
-//     }
-
-//     config |= (0b001 << 9); // ±4.096V
-//     config |= (0b1 << 8);   // single-shot
-//     config |= (0b111 << 5); 
-//     config |= (0b11);
-
-//     ads_write(0x01,config);
-
-//     delayMicroseconds(1200);
-//     uint8_t data[2];
-//     ads_read(0x00,data,2);
-
-//     int16_t raw = (data[0] << 8) | data[1];
-
-//     return raw; 
-// }
-
-// float ads_read_voltage(uint8_t channel){
-//     int16_t raw = ads_read_raw(channel);
-//     return raw * 0.000125038148; 
-// }
-
-
-
-#include<ads_1115.h>
-
-
-void ads_write(uint8_t reg, uint16_t data){
+void ads_write(uint8_t reg, uint16_t data) {
     Wire.beginTransmission(ADD_ADS);
     Wire.write(reg);
-    // msb of data
-    Wire.write((data >> 8)& 0xFF );
-    Wire.write(data & 0xFF); // lsb
+    Wire.write((data >> 8) & 0xFF);
+    Wire.write(data & 0xFF);
     Wire.endTransmission();
 }
-// ham doc 
-void ads_read(uint8_t reg, uint8_t* buffer, uint8_t len){
+
+void ads_read(uint8_t reg, uint8_t* buffer, uint8_t len) {
     Wire.beginTransmission(ADD_ADS);
     Wire.write(reg);
     Wire.endTransmission(false);
-    Wire.requestFrom((uint8_t)ADD_ADS,(uint8_t)len);
-    for(int i = 0; i < len; i++){
-        if(Wire.available()){
-            buffer[i] = Wire.read();
-        }
+    Wire.requestFrom((uint8_t)ADD_ADS, (uint8_t)len);
+    for (int i = 0; i < len; i++) {
+        if (Wire.available()) buffer[i] = Wire.read();
     }
-    
 }
 
-void ads_init(){
-    Wire.begin(8,9);
+// ISR chạy khi DRDY chuyển từ HIGH xuống LOW, báo có data mới
+void IRAM_ATTR ads_drdy_isr() {
+    ads_data_ready_flag = true;
 }
 
-int16_t ads_read_raw(uint8_t channel){
+void ads_init_continuous(uint8_t channel) {
+    Wire.begin(8, 9);
+    Wire.setClock(400000);
+
     uint16_t config = 0;
-    // bit 15
-    config  |= 1 << 15;
-    
-// bit 14:12 mux chon kenh
 
-    switch (channel)
-    {
-    case CHANEL_A0 : 
-        config |= 0b100 << 12; 
-        break;
-    case CHANEL_A1:
-        config |= 0b101 << 12;
-        break;
-    case CHANEL_A2:
-        config |= 0b110 << 12;
-        break;
-    case CHANEL_A3:
-        config |= 0b111 << 12;
-        break;
-    default:
-        break;
+    // chọn kênh đo
+    switch (channel) {
+        case CHANEL_A0: config |= 0b100 << 12; break;
+        case CHANEL_A1: config |= 0b101 << 12; break;
+        case CHANEL_A2: config |= 0b110 << 12; break;
+        case CHANEL_A3: config |= 0b111 << 12; break;
     }
 
-    // bit 11:9, set up 4.096V
-    config |= 0b001 << 9;
-    // bit 8: single-shot mode
-    config |= 0b1 << 8;
-    // bit 7:5 data rate
-    config |= 0b100 << 5;
-    // bit 4:2
-    config |= 0b111 << 2;
-    // bit 1:0 comp_que
-    config |= 0b11;
+    config |= 0b001 << 9; // PGA +-4.096V
+    // bit 8 = 0 nghia la continuous mode
+    config |= 0b101 << 5; // 250 SPS
+    config |= 0b00;       // COMP_QUE: assert sau 1 conversion
 
-    ads_write(0b01,config);
-    delayMicroseconds(1200);
-    uint8_t data[2];
-    ads_read(0b00,data,2);
-    uint16_t raw = (data[0] << 8 | data[1]);
-    
-    return raw;
+    ads_write(0x01, config);
+    ads_write(0x02, 0x0000); // Lo_thresh
+    ads_write(0x03, 0x8000); // Hi_thresh
 
+    pinMode(DRDY_PIN, INPUT);
+    attachInterrupt(digitalPinToInterrupt(DRDY_PIN), ads_drdy_isr, FALLING);
+
+    Serial.println("[ADS] Continuous 250SPS + interrupt GPIO5 enabled");
 }
 
-float ads_read_voltage(uint8_t channel){
-    int16_t raw = ads_read_raw(channel);
-    return raw*4096.0/32767.0;
+float ads_read_voltage_continuous() {
+    uint8_t data[2];
+    ads_read(0x00, data, 2);
+    int16_t raw = (int16_t)((data[0] << 8) | data[1]);
+    return raw * 4.096f / 32767.0f; // volt
 }

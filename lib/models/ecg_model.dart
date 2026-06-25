@@ -1,29 +1,44 @@
 import 'dart:convert';
 
-
 class EcgModel {
-  late final double ecg;
-  late final int? hr;
-   EcgModel({
-    required this.ecg,
-    this.hr,
-   });
-    // tạo đối tượng từ dữ liệu dạng json
-   factory EcgModel.fromJson(String payload){
-    try{
-      // ép kiểu dữ liệu nhận được dạng json thành map<key,value>
-      final map = jsonDecode(payload.trim()) as Map<String,dynamic>;
+  final List<double> ecg;
+  final double? hr;
+  final double? sdnn;
+  final double? rmssd;
+  final double? ibi;
+
+  EcgModel({required this.ecg, this.hr, this.sdnn, this.rmssd, this.ibi});
+
+  factory EcgModel.fromJson(String payload) {
+    try {
+      final map = jsonDecode(payload.trim()) as Map<String, dynamic>;
+
+      List<double> ecgList = [];
+
+      if (map['ecg'] != null) {
+        if (map['ecg'] is List) {
+          ecgList = (map['ecg'] as List)
+              .map((e) => (e as num).toDouble())
+              .toList();
+        } else if (map['ecg'] is num) {
+          ecgList = [(map['ecg'] as num).toDouble()];
+        }
+      }
+
       return EcgModel(
-        ecg: (map['ecg'] as num).toDouble(), 
-      hr: map.containsKey('hr') ? (map['hr'] as num).toInt() : null,
+        ecg: ecgList,
+        hr: map['hr'] != null ? (map['hr'] as num).toDouble() : null,
+        sdnn: map['sdnn'] != null ? (map['sdnn'] as num).toDouble() : null,
+        rmssd: map['rmssd'] != null ? (map['rmssd'] as num).toDouble() : null,
+        ibi: map['ibi'] != null
+            ? (map['ibi'] as num).toDouble()
+            : map['rr'] != null
+            ? (map['rr'] as num).toDouble()
+            : null,
       );
-    } catch(e){
-      _log('[EcgPoint] Parse lỗi: $e | payload: "$payload"');
-      return EcgModel(ecg: 0);
+    } catch (e) {
+      print('[EcgModel] Parse lỗi: $e');
+      return EcgModel(ecg: []);
     }
-   }
-}
-void _log(String msg) {
-  // ignore: avoid_print
-  print(msg);
+  }
 }

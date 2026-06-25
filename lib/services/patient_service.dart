@@ -4,12 +4,17 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:datn_20224010/models/ecg_recording.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:datn_20224010/models/patient_model.dart';
+import 'package:datn_20224010/utils/hrv_reference.dart';
+import 'dart:convert';
+import 'dart:typed_data';
+import 'package:firebase_storage/firebase_storage.dart';
 
 class PatientService {
   // singleton
   PatientService._();
   static final PatientService instance = PatientService._();
 
+  FirebaseStorage _storage = FirebaseStorage.instance;
   FirebaseAuth _auth = FirebaseAuth.instance;
   FirebaseFirestore _db = FirebaseFirestore.instance;
 
@@ -72,16 +77,37 @@ class PatientService {
     String? ghiChu,
   }) async {
     if (_uid == null) throw Exception('Chưa đăng nhập');
-    if (hoTen.trim().isEmpty) throw Exception('Họ tên không được để trống');
-    final ref = _patientsCol.doc(); // tự sinh id
+
+    if (hoTen.trim().isEmpty) {
+      throw Exception('Họ tên không được để trống');
+    }
+
+    if (ngaySinh.trim().isEmpty) {
+      throw Exception('Ngày sinh không được để trống');
+    }
+
+    final birthYear = HrvReference.birthYearFromNgaySinh(ngaySinh);
+    if (birthYear == null) {
+      throw Exception(
+        'Ngày sinh không hợp lệ. Nhập dạng dd/mm/yyyy, ví dụ 13/05/2004',
+      );
+    }
+
+    final gender = HrvReference.normalizeGender(gioiTinh);
+    if (gender == null) {
+      throw Exception('Giới tính bắt buộc phải là Nam hoặc Nữ');
+    }
+
+    final ref = _patientsCol.doc();
     final now = DateTime.now();
+
     final patient = PatientModel(
       id: ref.id,
       hoTen: hoTen.trim(),
       ngaySinh: ngaySinh.trim(),
       createdAt: now,
       ghiChu: ghiChu?.trim(),
-      gioiTinh: gioiTinh,
+      gioiTinh: gender,
     );
     // lưu dữ liệu patient lên firestor vào document mà ref đang trỏ tới
     await ref.set(patient.toMap());
@@ -150,18 +176,95 @@ class PatientService {
     required List<double> data,
     required int heartRate,
     required int duration,
+    required List<double> rrIntervals,
+    double? sdnn,
+    double? rmssd,
+    double? ibi,
+
+    int? patientAge,
+    String? patientGender,
+    String? patientAgeGroup,
+
+    String? sdnnLevel,
+    String? sdnnAssessment,
+    double? sdnnRefLow,
+    double? sdnnRefHigh,
+
+    String? rmssdLevel,
+    String? rmssdAssessment,
+    double? rmssdRefLow,
+    double? rmssdRefHigh,
+
+    String? hrvOverallAssessment,
   }) async {
     if (_uid == null) throw Exception('Chưa đăng nhập');
     if (data.isEmpty) throw Exception('Không có dữ liệu ECG để lưu');
+
     final ref = _recordingsCol(patientId).doc();
-    await ref.set({
-      'id': ref.id,
-      'data': data,
-      'heartRate': heartRate,
-      'duration': duration,
-      'samples': data.length,
-      'createdAt': DateTime.now().toIso8601String(),
-    });
+    final ecgPath =
+        'users/$_uid/patients/$patientId/recordings/${ref.id}/ecg.json';
+    final rrPath =
+        'users/$_uid/patients/$patientId/recordings/${ref.id}/rr.json';
+
+    // upload file data ecg
+    await _storage
+        .ref(ecgPath)
+        .putData(
+          Uint8List.fromList(
+            utf8.encode( // biến chuỗi json thành byte rồi put data
+              jsonEncode({
+                'samplesRate': 250,
+                'unit': 'mv',
+                'samples': data.length,
+                'data': data,
+              }),
+            ),
+          ),
+          SettableMetadata(contentType: 'application/json'),
+        );
+    // upload file rr
+    await _storage
+        .ref(rrPath)
+        .putData(
+          Uint8List.fromList(
+            utf8.encode(
+              jsonEncode({
+                'unit': 'ms',
+                'count': rrIntervals.length,
+                'rrIntervals': rrIntervals,
+              }),
+            ),
+          ),
+          SettableMetadata(contentType: 'application/json'),
+        );
+    final recording = EcgRecording(
+      id: ref.id,
+      data: const [],
+
+      ecgPath: ecgPath,
+      rrPath: rrPath,
+      heartRate: heartRate,
+      duration: duration,
+      samples: data.length,
+      createdAt: DateTime.now(),
+      sdnn: sdnn,
+      rmssd: rmssd,
+      ibi: ibi,
+      patientAge: patientAge,
+      patientGender: patientGender,
+      patientAgeGroup: patientAgeGroup,
+      sdnnLevel: sdnnLevel,
+      sdnnAssessment: sdnnAssessment,
+      sdnnRefLow: sdnnRefLow,
+      sdnnRefHigh: sdnnRefHigh,
+      rmssdLevel: rmssdLevel,
+      rmssdAssessment: rmssdAssessment,
+      rmssdRefLow: rmssdRefLow,
+      rmssdRefHigh: rmssdRefHigh,
+      hrvOverallAssessment: hrvOverallAssessment,
+    );
+
+    await ref.set(recording.toMap());
   }
 
   // xóa một bản ghi ECG
@@ -170,6 +273,29 @@ class PatientService {
     required String recordingId,
   }) async {
     if (_uid == null) throw Exception('Chưa đăng nhập');
-    await _recordingsCol(patientId).doc(recordingId).delete();
+
+    final docRef = _recordingsCol(patientId).doc(recordingId);
+    final snap = await docRef.get();
+
+    if (snap.exists) {
+      final data = snap.data() as Map<String, dynamic>;
+
+      final ecgPath = data['ecgPath'] as String?;
+      final rrPath = data['rrPath'] as String?;
+
+      if (ecgPath != null && ecgPath.isNotEmpty) {
+        try {
+          await _storage.ref(ecgPath).delete();
+        } catch (_) {}
+      }
+
+      if (rrPath != null && rrPath.isNotEmpty) {
+        try {
+          await _storage.ref(rrPath).delete();
+        } catch (_) {}
+      }
+    }
+
+    await docRef.delete();
   }
 }

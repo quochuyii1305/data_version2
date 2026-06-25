@@ -4,6 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:datn_20224010/services/mqtt_service.dart';
 import 'package:datn_20224010/services/patient_service.dart';
 import 'package:datn_20224010/widgets/ecg_painter.dart';
+import "dart:math" as math;
+import 'package:datn_20224010/utils/hrv_reference.dart';
+import 'package:datn_20224010/models/patient_model.dart';
 
 class DoTab extends StatefulWidget {
   DoTab({super.key});
@@ -27,14 +30,21 @@ class _DoTabState extends State<DoTab> {
   bool _isRecording = false; // đang ghi data → hiện nút Dừng
   bool _hasStopped = false; // đã dừng → hiện phần Lưu
   String _statusMsg = 'Chưa kết nối'; // chữ trạng thái dưới tiêu đề
-  static const int _visiblePoints = 200; // số điểm hiển thị trên đồ thị
+  double? _sdnn;
+  double? _rmssd;
+  double? _ibi;
+  static const int _visiblePoints = 500; // số điểm hiển thị trên đồ thị
 
   // Data ECG
-  // _displayBuffer: chỉ giữ 200 điểm gần nhất để vẽ đồ thị
+  final List<double> _pendingSamples = [];
   final List<double> _displayBuffer = [];
   // _sessionData: giữ toàn bộ data từ lúc bắt đầu đến lúc dừng để lưu trên Firestor
   final List<double> _sessionData = [];
 
+  final List<double> _rrIntervals = [];
+
+  static const int _minHrvDurationSecs = 300; // 5 phút
+  static const int _minRrForFinalHrv = 120; // chặn trường hợp bắt đỉnh quá lỗi
   // chỉ số
   int _heartRate = 0;
   int _elapsedSecs = 0; // số giây đã đo
@@ -78,6 +88,11 @@ class _DoTabState extends State<DoTab> {
             _buildEcgChart(),
             SizedBox(height: 16),
             _buildMetrics(),
+            if ((_isRecording || _hasStopped) && _sdnn != null ||
+                _ibi != null) ...[
+              const SizedBox(height: 16),
+              _buildHrvSection(),
+            ],
             SizedBox(height: 24),
             _buildControlButton(),
 
@@ -204,6 +219,8 @@ class _DoTabState extends State<DoTab> {
                       painter: EcgPainter(
                         points: List.from(_displayBuffer),
                         color: _ecgGreen,
+                        sampleRateHz: 250,
+                        visibleSampleCount: _visiblePoints,
                       ),
                       child: SizedBox.expand(),
                     ),
@@ -469,8 +486,14 @@ class _DoTabState extends State<DoTab> {
       _statusMsg = 'Đang ghi...';
       _displayBuffer.clear(); // xóa data cũ
       _sessionData.clear();
+      _rrIntervals.clear();
+      _pendingSamples.clear();
+
       _heartRate = 0;
       _elapsedSecs = 0;
+      _sdnn = null;
+      _rmssd = null;
+      _ibi = null;
     });
 
     // lắng nghe stream ECG từ MQTT
@@ -478,9 +501,7 @@ class _DoTabState extends State<DoTab> {
       _onNewPoint(point);
     });
 
-    // cứ 30s rebuild UI 1 lần
-
-    _renderTimer = Timer.periodic(Duration(microseconds: 30), (_) {
+    _renderTimer = Timer.periodic(Duration(milliseconds: 20), (_) {
       if (mounted && _isRecording) setState(() {});
     });
 
@@ -498,30 +519,60 @@ class _DoTabState extends State<DoTab> {
   void _onNewPoint(EcgModel point) {
     if (!_isRecording) return;
 
-    // thêm vào displaybuffer để vẽ đồ thị
-    _displayBuffer.add(point.ecg);
+    // Duyệt mảng data 25 điểm ESP32 gửi lên
+    for (double val in point.ecg) {
+      _displayBuffer.add(val);
+      _sessionData.add(val);
+    }
 
-    // giữ 200 điểm gần nhất, xóa điểm cũ nhất nếu vượt quá
-    if (_displayBuffer.length > _visiblePoints) _displayBuffer.removeAt(0);
+    if (_displayBuffer.length > _visiblePoints) {
+      _displayBuffer.removeRange(0, _displayBuffer.length - _visiblePoints);
+    }
 
-    //lưu toàn bộ data để lưu firestore sau
-    _sessionData.add(point.ecg);
-
-    // cập nhật nhịp tim nếu ESP32 có gửi
     if (point.hr != null) {
-      _heartRate = point.hr!;
+      _heartRate = point.hr!.toInt();
+    }
+
+    // RR mới ESP32 gửi lên.
+    // Mỗi RR chỉ được gửi 1 lần, app gom lại để tính HRV final.
+    if (point.ibi != null && point.ibi! >= 300 && point.ibi! <= 1500) {
+      _rrIntervals.add(point.ibi!);
+      _ibi = point.ibi;
+    }
+
+    // HRV live rolling từ ESP32: chỉ dùng để hiển thị trong lúc đo.
+    // Kết quả lưu cuối cùng sẽ được tính lại từ _rrIntervals.
+    if (point.sdnn != null && point.sdnn! > 0) {
+      _sdnn = point.sdnn;
+    }
+
+    if (point.rmssd != null && point.rmssd! > 0) {
+      _rmssd = point.rmssd;
     }
   }
 
   void _stopRecording() {
-    // hủy hết timer và subscription
     _mqttSub?.cancel();
     _durationTimer?.cancel();
     _renderTimer?.cancel();
+
+    final finalHrv = _elapsedSecs >= _minHrvDurationSecs
+        ? _calculateFinalHrv()
+        : null;
+
     setState(() {
       _isRecording = false;
       _hasStopped = true;
-      _statusMsg = 'Đã dừng';
+
+      if (finalHrv != null) {
+        _sdnn = finalHrv['sdnn'];
+        _rmssd = finalHrv['rmssd'];
+        _ibi = finalHrv['ibi'];
+      }
+
+      _statusMsg = _elapsedSecs >= _minHrvDurationSecs
+          ? 'Đã dừng - đủ 5 phút'
+          : 'Đã dừng - chưa đủ 5 phút';
     });
   }
 
@@ -533,8 +584,13 @@ class _DoTabState extends State<DoTab> {
       _hasStopped = false;
       _displayBuffer.clear();
       _sessionData.clear();
+      _rrIntervals.clear();
       _heartRate = 0;
+
       _elapsedSecs = 0;
+      _sdnn = null;
+      _rmssd = null;
+      _ibi = null;
       _statusMsg = 'Sẵn sàng';
     });
   }
@@ -630,7 +686,7 @@ class _DoTabState extends State<DoTab> {
           SizedBox(height: 10),
           // đo lại
           TextButton.icon(
-            icon: Icon(Icons.refresh, color: _textGrey,),
+            icon: Icon(Icons.refresh, color: _textGrey),
             onPressed: _reset,
             label: Text('Đo lại', style: TextStyle(color: _textGrey)),
           ),
@@ -695,7 +751,7 @@ class _DoTabState extends State<DoTab> {
                 subtitle: p.subtitle.isNotEmpty ? Text(p.subtitle) : null,
                 onTap: () {
                   Navigator.pop(context);
-                  _saveRecording(patientId: p.id, patientName: p.hoTen);
+                  _saveRecording(patient: p);
                 },
               );
             },
@@ -777,10 +833,7 @@ class _DoTabState extends State<DoTab> {
                   );
                   if (!mounted) return;
                   Navigator.pop(dCtx);
-                  _saveRecording(
-                    patientId: patient.id,
-                    patientName: patient.hoTen,
-                  );
+                  _saveRecording(patient: patient);
                 } catch (e) {
                   if (mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
@@ -804,32 +857,285 @@ class _DoTabState extends State<DoTab> {
     );
   }
 
+  Map<String, double>? _calculateFinalHrv() {
+    final rr = _rrIntervals
+        .where((v) => v >= 300 && v <= 1500)
+        .toList(growable: false);
+
+    if (rr.length < 2) return null;
+
+    // IBI trung bình của cả phiên đo
+    final meanIbi = rr.reduce((a, b) => a + b) / rr.length;
+
+    double varianceSum = 0;
+    for (final v in rr) {
+      final d = v - meanIbi;
+      varianceSum += d * d;
+    }
+
+    final sdnn = math.sqrt(varianceSum / (rr.length - 1));
+
+    double diffSqSum = 0;
+
+    for (int i = 1; i < rr.length; i++) {
+      final diff = rr[i] - rr[i - 1];
+      diffSqSum += diff * diff;
+    }
+
+    final rmssd = math.sqrt(diffSqSum / (rr.length - 1));
+
+    return {'sdnn': sdnn, 'rmssd': rmssd, 'ibi': meanIbi};
+  }
+
   // Lưu recording lên firestore
 
-  Future<void> _saveRecording({
-    required String patientId,
-    required String patientName,
-  }) async {
+  Future<void> _saveRecording({required PatientModel patient}) async {
     try {
+      if (_elapsedSecs < _minHrvDurationSecs) {
+        final remain = _minHrvDurationSecs - _elapsedSecs;
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Cần đo thêm $remain giây nữa để lưu HRV chuẩn 5 phút.',
+            ),
+            backgroundColor: Colors.orange,
+          ),
+        );
+
+        return;
+      }
+
+      if (_rrIntervals.length < _minRrForFinalHrv) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'IBI/RR bắt được quá ít (${_rrIntervals.length}). Kiểm tra điện cực/tín hiệu rồi đo lại.',
+            ),
+            backgroundColor: Colors.orange,
+          ),
+        );
+
+        return;
+      }
+
+      final finalHrv = _calculateFinalHrv();
+
+      final finalSdnn = finalHrv?['sdnn'];
+      final finalRmssd = finalHrv?['rmssd'];
+      final finalIbi = finalHrv?['ibi'];
+
+      final eval = HrvReference.evaluate(
+        sdnn: finalSdnn,
+        rmssd: finalRmssd,
+        gioiTinh: patient.gioiTinh,
+        ngaySinh: patient.ngaySinh,
+      );
+
+      if (eval == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Không đánh giá được HRV vì thiếu hoặc sai ngày sinh/giới tính bệnh nhân.',
+            ),
+            backgroundColor: Colors.orange,
+          ),
+        );
+        return;
+      }
+
       await PatientService.instance.saveRecording(
-        patientId: patientId,
+        patientId: patient.id,
         data: _sessionData,
         heartRate: _heartRate,
         duration: _elapsedSecs,
+        sdnn: finalSdnn,
+        rmssd: finalRmssd,
+        ibi: finalIbi,
+        rrIntervals: _rrIntervals,
+
+        patientAge: eval.age,
+        patientGender: eval.gender,
+        patientAgeGroup: eval.ageGroup,
+
+        sdnnLevel: eval.sdnn.level,
+        sdnnAssessment: eval.sdnn.text,
+        sdnnRefLow: eval.sdnn.range.lower,
+        sdnnRefHigh: eval.sdnn.range.upper,
+
+        rmssdLevel: eval.rmssd.level,
+        rmssdAssessment: eval.rmssd.text,
+        rmssdRefLow: eval.rmssd.range.lower,
+        rmssdRefHigh: eval.rmssd.range.upper,
+
+        hrvOverallAssessment: eval.overall,
       );
+
       if (!mounted) return;
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Đã lưu ${_sessionData.length} mẫu vào: $patientName'),
+          content: Text('✓ Đã lưu vào ${patient.hoTen}: ${eval.overall}'),
           backgroundColor: _primaryGreen,
         ),
       );
+
       _reset();
     } catch (e) {
       if (!mounted) return;
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Lỗi lưu: $e'), backgroundColor: Colors.red),
       );
     }
+  }
+
+  Widget _buildHrvSection() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // tiêu đề
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  color: _lightGreen,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(
+                  Icons.favorite_border,
+                  color: _primaryGreen,
+                  size: 18,
+                ),
+              ),
+              const SizedBox(width: 8),
+              const Text(
+                'HRV — Heart Rate Variability',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: _textDark,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+
+          // 3 chỉ số
+          Row(
+            children: [
+              Expanded(
+                child: _buildHrvCard(
+                  label: 'SDNN',
+                  value: _sdnn != null ? '${_sdnn!.toStringAsFixed(1)}' : '--',
+                  unit: 'ms',
+                  desc: 'HRV tổng thể',
+                  status: _primaryGreen,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _buildHrvCard(
+                  label: 'RMSSD',
+                  value: _rmssd != null
+                      ? '${_rmssd!.toStringAsFixed(1)}'
+                      : '--',
+                  unit: 'ms',
+                  desc: 'Khả năng phục hồi',
+                  status: _primaryGreen,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _buildHrvCard(
+                  label: 'IBI',
+                  value: _ibi != null ? '${_ibi!.toStringAsFixed(1)}' : '--',
+                  unit: 'ms',
+                  desc: 'Khoảng nhịp',
+                  status: _primaryGreen,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHrvCard({
+    required String label,
+    required String value,
+    required String unit,
+    required String desc,
+    required Color status,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: _lightGreen,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: _lightGreen),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 9,
+              fontWeight: FontWeight.w700,
+              color: _lightGreen,
+              letterSpacing: 0.5,
+            ),
+          ),
+          const SizedBox(height: 4),
+          SizedBox(
+            width: double.infinity,
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    value,
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                      color: _textDark,
+                    ),
+                  ),
+                  const SizedBox(width: 2),
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 2),
+                    child: Text(
+                      unit,
+                      style: const TextStyle(fontSize: 11, color: _textGrey),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(desc, style: const TextStyle(fontSize: 10, color: _textGrey)),
+        ],
+      ),
+    );
   }
 }

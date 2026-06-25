@@ -16,7 +16,7 @@ class PatientModel {
     this.ghiChu,
     required this.createdAt,
   });
-  // chuyển object thành map để lưu trên json
+  // chuyển object thành map để lưu thành json
   Map<String, dynamic> toMap() {
     return {
       'id': id,

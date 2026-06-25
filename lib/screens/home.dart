@@ -107,7 +107,7 @@ class _MyHomeState extends State<MyHome> with SingleTickerProviderStateMixin {
                           'Heart Protect',
                           style: GoogleFonts.playfairDisplay(
                             textStyle: const TextStyle(
-                              fontSize: 52,
+                              fontSize: 36,
                               fontWeight: FontWeight.w900,
                               color: Color.fromARGB(139, 128, 64, 44),
                               letterSpacing: 1,

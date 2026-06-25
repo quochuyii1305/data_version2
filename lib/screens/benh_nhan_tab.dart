@@ -103,7 +103,7 @@ class _BenhNhanTabState extends State<BenhNhanTab> {
                 TextField(
                   controller: ngaySinhCtrl,
                   decoration: const InputDecoration(
-                    labelText: 'Ngày sinh (dd/mm/yyyy)',
+                    labelText: 'Ngày sinh (dd/mm/yyyy)*',
                     border: OutlineInputBorder(),
                   ),
                   keyboardType: TextInputType.datetime,
@@ -118,7 +118,6 @@ class _BenhNhanTabState extends State<BenhNhanTab> {
                   items: const [
                     DropdownMenuItem(value: 'Nam', child: Text('Nam')),
                     DropdownMenuItem(value: 'Nữ', child: Text('Nữ')),
-                    DropdownMenuItem(value: 'Khác', child: Text('Khác')),
                   ],
                   onChanged: (v) => setDS(() => selectedGT = v),
                 ),

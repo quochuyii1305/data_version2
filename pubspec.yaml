@@ -19,6 +19,7 @@ dependencies:
   cloud_firestore: ^5.0.0
   mqtt_client: ^10.11.10
   google_sign_in: ^6.2.1
+  firebase_storage: ^12.4.10
 
 
 dev_dependencies:
@@ -30,4 +31,4 @@ flutter:
   uses-material-design: true
   assets:
     - assets/images/
-    
+firebase_storage: ^12.0.0

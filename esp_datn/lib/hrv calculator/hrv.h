@@ -1,8 +1,8 @@
 #pragma once
 #include <Arduino.h>
 
-#define HRV_WINDOW 1000 // giữ tối đa khoảng 1000 RR gần nhất để tính
-#define HRV_MIN_RR_COUNT 300 // giả sử có 60 nhịp 1 phút, muốn 5phút mới đo thì phải có ít nhất 300 RR
+#define HRV_WINDOW 600 
+#define HRV_MIN_RR_COUNT 300
 
 class HRVCalculator {
 public:

@@ -42,7 +42,7 @@ void ads_init_continuous(uint8_t channel) {
     config |= 0b001 << 9; // PGA +-4.096V
     // bit 8 = 0 nghia la continuous mode
     config |= 0b101 << 5; // 250 SPS
-    config |= 0b00;       // COMP_QUE: assert sau 1 conversion
+    config |= 0b00;       // COMP_QUE: assert sau 1 conversion, can cho DRDY
 
     ads_write(0x01, config);
     ads_write(0x02, 0x0000); // Lo_thresh

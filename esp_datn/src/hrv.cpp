@@ -9,7 +9,6 @@ void HRVCalculator::addRR(float rr_ms) {
     if (rr_ms < 300 || rr_ms > 1500) return;
 
     _rr_buf[_idx] = rr_ms;
-    // nếu count = 799 thì thay thằng 0 bằng thằng rr thứ 800
     _idx = (_idx + 1) % HRV_WINDOW;
 
     if (_count < HRV_WINDOW) {

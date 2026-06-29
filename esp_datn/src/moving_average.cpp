@@ -1,5 +1,6 @@
 #include "moving_average.h"
 
+// constructor
 MovingAverageFilter::MovingAverageFilter() {
     index = 0;
     sum = 0.0f;
@@ -9,16 +10,17 @@ MovingAverageFilter::MovingAverageFilter() {
 }
 
 float MovingAverageFilter::process(float new_val) {
-    // Trừ đi giá trị cũ nhất
+    // dùng mảng vòng
+    // trừ đi giá trị cũ nhất
     sum -= buffer[index];
-    // Nạp giá trị mới vào mảng
+    // nạp giá trị mới vào mảng
     buffer[index] = new_val;
-    // Cộng giá trị mới vào tổng
+    // cộng giá trị mới vào tổng
     sum += buffer[index];
     
-    // Xoay vòng index
+    // xoay vòng index
     index = (index + 1) % MA_WINDOW_SIZE;
     
-    // Trả về giá trị trung bình
+    // trả về giá trị trung bình
     return sum / MA_WINDOW_SIZE;
 }

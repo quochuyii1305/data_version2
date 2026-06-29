@@ -10,6 +10,7 @@ void reset_wifi_config() {
     wm.resetSettings();
     Serial.println("Da xoa cau hinh WiFi da luu");
 
+    // phát wifi ra ngoài
     bool connected = wm.startConfigPortal(WIFI_CONFIG_AP_NAME, WIFI_CONFIG_AP_PASS);
 
     if (connected) {
@@ -28,11 +29,12 @@ void reset_wifi_config() {
 
 void setup_wifi() {
     pinMode(WIFI_RESET_BUTTON_PIN, INPUT_PULLUP);
-    delay(50); // Chờ pin ổn định
+    delay(50); 
 
     Serial.println("Dang khoi tao WiFi...");
 
     WiFi.mode(WIFI_STA);
+    // tự động kết nối wifi cũ
     WiFi.setAutoReconnect(true);
     WiFi.persistent(true);
 

@@ -5,10 +5,11 @@
 
 #define SAMPLE_RATE_HZ 250
 #define MWI_SIZE 38          // ~ 150ms chiều rộng cửa sổ phải xấp xỉ bằng với chiều rộng của phức bộ QRS rộng nhất có thể xảy ra
-#define REFRACTORY_PERIOD 50 // khoảng thời gian trễ 200 ms
+#define REFRACTORY_PERIOD 50 // khoảng thời gian trễ 200 ms khi phát hiện đc đỉnh
 
 #define IIR_TAPS 5
 #define DERIVATIVE_TAPS 5
+#define F_SEARCH_WINDOW 50 // 50 sample = 200ms tại fs = 250Hz
 
 struct ECG_Signals
 {
@@ -71,6 +72,18 @@ private:
     float highPassFilter(float new_sample);
     void updateThresholds();
     float getRRAverage();
+
+    // các biến cho searrch back
+    float peak_f_val;
+    float sb_peak_i_val;
+    float sb_peak_f_val;
+    int sb_time_since_r_peak;
+
+    // bien luu max của hpf
+    float f_buffer[F_SEARCH_WINDOW];
+    int f_index;
+
+    float getMaxFWindow();
 
 public:
     PanTompkinsECG();

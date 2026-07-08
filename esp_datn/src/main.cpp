@@ -43,7 +43,6 @@ void mqtt_task(void *parameter)
 void setup()
 {
     Serial.begin(115200);
-    delay(5000);
     Serial.println();
     Serial.println("===== ESP32 START =====");
 
@@ -58,7 +57,7 @@ void setup()
     xTaskCreatePinnedToCore(
         mqtt_task,   // hàm thực thi tác vụ
         "MQTT_Task", // tên tác vụ
-        8192,        // dung lượng bộ nhớ stack cấp cho task
+        16384,        // dung lượng bộ nhớ stack cấp cho task
         NULL,        // tham số truyền vào
         1,           // mức độ ưu tiên
         NULL,        // biến quản lý task

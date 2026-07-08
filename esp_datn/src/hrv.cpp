@@ -19,7 +19,7 @@ void HRVCalculator::addRR(float rr_ms) {
 void HRVCalculator::calculate() {
     if (_count < 2) return;
 
-    // ================= SDNN =================
+    //SDNN 
     float sum = 0;
     for (int i = 0; i < _count; i++) {
         sum += _rr_buf[i];
@@ -35,7 +35,7 @@ void HRVCalculator::calculate() {
 
     _sdnn = sqrt(variance / (_count - 1));
 
-    // ================= RMSSD =================
+    //RMSSD
     float sum_sq = 0;
 
     int start_idx = (_count == HRV_WINDOW) ? _idx : 0;

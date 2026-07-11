@@ -237,6 +237,7 @@ class PatientService {
           ),
           SettableMetadata(contentType: 'application/json'),
         );
+        // khi upload file để lưu xong, tạo đối tượng EcgRecording
     final recording = EcgRecording(
       id: ref.id,
       data: const [],

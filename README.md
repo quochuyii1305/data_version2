@@ -1,156 +1,241 @@
-# Heart Protect
+# Heart Protect - Hệ thống IoT giám sát ECG
 
-Heart Protect là hệ thống theo dõi tín hiệu điện tâm đồ (ECG) và biến thiên nhịp tim (HRV), gồm PCB đo ECG tự thiết kế sử dụng ESP32-S3 và AD8232 cùng ứng dụng Flutter. PCB thu nhận, xử lý và gửi dữ liệu qua MQTT/TLS; ứng dụng hiển thị dạng sóng ECG, quản lý hồ sơ bệnh nhân và lưu lịch sử đo trên Firebase.
+Đây là repository ứng dụng di động của đồ án tốt nghiệp **“Thiết kế hệ thống giám sát tín hiệu điện tim ECG sử dụng ESP32 và ứng dụng di động”**. Hệ thống hoàn chỉnh gồm thiết bị đo ECG trên PCB tự thiết kế, firmware xử lý tín hiệu thời gian thực, truyền dữ liệu MQTT và ứng dụng Flutter để hiển thị, quản lý bệnh nhân và lưu trữ kết quả.
 
-> Dự án phục vụ mục đích học tập và nghiên cứu. Kết quả hiển thị không thay thế chẩn đoán hoặc thiết bị y tế chuyên dụng.
+> Hệ thống là nguyên mẫu phục vụ học tập và nghiên cứu, chưa phải thiết bị y tế được chứng nhận và không được sử dụng để tự chẩn đoán.
+
+## Thông tin đồ án
+
+| Nội dung | Thông tin |
+| --- | --- |
+| Sinh viên thực hiện | Vũ Quốc Huy |
+| Mã số sinh viên | 20224010 |
+| Giảng viên hướng dẫn | PGS. Hoàng Mạnh Thắng |
+| Đơn vị | Trường Điện - Điện tử, Đại học Bách khoa Hà Nội |
+| Năm hoàn thành | 2026 |
 
 ## Chức năng chính
 
-- Thu nhận ECG bằng PCB tự thiết kế tích hợp ESP32-S3 và AD8232.
-- Đăng ký, đăng nhập bằng email/mật khẩu hoặc Google và đặt lại mật khẩu.
-- Kết nối MQTT broker qua TLS và theo dõi trạng thái kết nối.
-- Nhận, giải mã và hiển thị tín hiệu ECG theo thời gian thực.
-- Hiển thị nhịp tim (HR), khoảng IBI và các chỉ số HRV gồm SDNN, RMSSD.
-- Tính lại kết quả HRV cuối phiên từ danh sách RR/IBI.
-- Quản lý hồ sơ bệnh nhân và đánh giá HRV theo nhóm tuổi, giới tính.
-- Lưu metadata bản ghi trong Cloud Firestore.
-- Lưu mẫu ECG và danh sách RR dưới dạng JSON trong Firebase Storage.
-- Xem lại hoặc xóa lịch sử đo của từng bệnh nhân.
+- Thu nhận tín hiệu ECG từ ba điện cực RA, LA, RL bằng module AD8232.
+- Số hóa ECG bằng ADC ngoài ADS1115 16-bit ở 250 SPS.
+- Phát hiện đỉnh R bằng thuật toán Pan-Tompkins trên ESP32-S3.
+- Tính nhịp tim BPM, khoảng RR/IBI và các chỉ số HRV gồm SDNN, RMSSD.
+- Gửi từng batch 25 mẫu ECG lên HiveMQ Cloud qua MQTT/TLS.
+- Hiển thị dạng sóng ECG, HR và HRV gần thời gian thực trên ứng dụng Flutter.
+- Đăng ký, đăng nhập email/mật khẩu hoặc Google và đặt lại mật khẩu.
+- Quản lý hồ sơ bệnh nhân, lưu và xem lại từng phiên đo.
+- Lưu metadata trên Cloud Firestore; lưu toàn bộ ECG/RR dạng JSON trên Firebase Storage.
 
-## Luồng dữ liệu
+## Kiến trúc hệ thống
 
-```text
-Điện cực ECG
-      |
-      v
-AD8232 trên PCB tự thiết kế
-  (thu nhận và xử lý analog)
-      |
-      v
-ESP32-S3
-  (ADC 250 Hz, xử lý ECG/HRV)
-      |
-      | Wi-Fi - JSON qua MQTT/TLS
-      v
-HiveMQ Cloud (topic: ecg/data)
-      |
-      v
-Flutter app -> Đồ thị ECG + HR/HRV
-      |
-      +-> Cloud Firestore: người dùng, bệnh nhân, metadata bản ghi
-      +-> Firebase Storage: ecg.json, rr.json
+```mermaid
+flowchart TD
+    A[Điện cực RA, LA, RL] --> B[AD8232 analog front-end]
+    B --> C[ADS1115 ADC 16-bit]
+    C --> D[ESP32-S3 và firmware]
+    D --> E[HiveMQ Cloud qua MQTT/TLS]
+    E --> F[Ứng dụng Flutter]
+    F --> G[Cloud Firestore]
+    F --> H[Firebase Storage]
 ```
 
-## Phần cứng
+Luồng xử lý dữ liệu:
 
-Phần đo ECG không sử dụng một bộ kit hoàn chỉnh có sẵn mà được xây dựng trên PCB thiết kế riêng cho dự án.
+1. AD8232 thu nhận, khuếch đại và lọc analog sơ cấp tín hiệu ECG.
+2. Ngõ ra AD8232 được đưa vào kênh A0 của ADS1115.
+3. ADS1115 chuyển đổi liên tục ở 250 SPS và báo mẫu mới bằng chân ALERT/RDY.
+4. ESP32-S3 đọc mẫu qua I²C, làm mượt tín hiệu và chạy Pan-Tompkins trên dữ liệu thô.
+5. Firmware tính BPM, RR/IBI, SDNN, RMSSD và đưa batch vào FreeRTOS queue.
+6. `MQTT_Task` đóng gói JSON và publish lên topic `ecg/data`.
+7. Ứng dụng Flutter subscribe topic, vẽ ECG và tích lũy dữ liệu cho phiên đo.
+8. Khi người dùng lưu kết quả, app ghi metadata vào Firestore và file ECG/RR vào Storage.
 
-| Khối | Vai trò |
+## Phần cứng ECG Device
+
+Thiết bị được triển khai trên **PCB hai lớp tự thiết kế**. ESP32-S3, ADS1115, nguồn, USB và các linh kiện phụ được tích hợp trên PCB; AD8232 là module có sẵn duy nhất được cắm vào header của mạch để giảm rủi ro ở khối analog trong giai đoạn nguyên mẫu.
+
+### Thành phần chính
+
+| Thành phần | Vai trò và cấu hình trong hệ thống |
 | --- | --- |
-| Điện cực ECG | Thu tín hiệu điện thế sinh học từ người đo |
-| AD8232 | Khối analog front-end dùng để thu nhận, khuếch đại và lọc tín hiệu ECG trước khi đưa vào ADC |
-| ESP32-S3 | Lấy mẫu ngõ ra AD8232 bằng ADC, xử lý dữ liệu và truyền qua Wi-Fi/MQTT |
-| PCB tự thiết kế | Tích hợp các khối xử lý, analog, nguồn và kết nối của hệ thống |
+| ESP32-S3 | Bộ xử lý trung tâm, chạy Pan-Tompkins/HRV, FreeRTOS và truyền MQTT qua Wi-Fi 2.4 GHz |
+| ADS1115 | ADC ngoài 16-bit, continuous mode, 250 SPS, PGA `±4.096 V`, địa chỉ I²C `0x48` |
+| AD8232 | Analog front-end ECG một kênh, nhận điện cực RA/LA/RL và xuất tín hiệu analog |
+| AMS1117-3.3 | Hạ nguồn 5 V từ USB/jack xuống 3.3 V cho ESP32-S3, ADS1115 và AD8232 |
+| USB Type-C | Cấp nguồn, nạp firmware và debug Serial qua D+/D- |
+| BOOT/RESET | Vào bootloader, khởi động lại thiết bị và kích hoạt cấu hình lại Wi-Fi |
 
-Firmware phía ESP32-S3 thực hiện các nhiệm vụ chính:
+### Kết nối phần cứng
 
-- Lấy mẫu ECG với tần số 250 Hz.
-- Gom các mẫu ECG thành từng nhóm để gửi; ứng dụng hiện hỗ trợ payload chứa khoảng 25 mẫu mỗi lần.
-- Xác định nhịp tim và khoảng RR/IBI.
-- Tính các chỉ số HRV tạm thời như SDNN và RMSSD.
-- Đóng gói dữ liệu JSON rồi publish lên topic `ecg/data` qua MQTT/TLS.
+| Tín hiệu | Kết nối | Chức năng |
+| --- | --- | --- |
+| AD8232 OUT | ADS1115 A0 | Đưa tín hiệu ECG analog vào ADC |
+| ADS1115 SDA | ESP32-S3 GPIO8 | Dữ liệu I²C |
+| ADS1115 SCL | ESP32-S3 GPIO9 | Clock I²C |
+| ADS1115 ALERT/RDY | ESP32-S3 GPIO5 | Ngắt DRDY báo mẫu ADC mới |
+| ADS1115 ADDR | GND | Chọn địa chỉ I²C `0x48` |
+| AD8232 VCC, ADS1115 VDD | 3.3 V | Nguồn cho khối ECG và ADC |
+| AD8232 GND, ADS1115 GND | GND chung | Mass tham chiếu hệ thống |
+| USB Type-C/jack nguồn | 5 V | Cấp nguồn đầu vào và nạp chương trình |
 
-Repository hiện chứa source của ứng dụng Flutter. Schematic, PCB layout, BOM, Gerber, pin mapping và firmware ESP32-S3 chưa được lưu trong repository này, vì vậy README chỉ mô tả kiến trúc phần cứng ở mức hệ thống và không giả định sơ đồ chân.
+Khi layout PCB, đường analog từ AD8232 tới ADS1115 được ưu tiên ngắn, tránh chạy song song với đường số; bus I²C được giữ ngắn và tách khỏi vùng đầu vào ECG. Tụ lọc được đặt gần chân nguồn và mặt GND được tổ chức để hạn chế nhiễu.
 
-### An toàn thử nghiệm
+## Firmware ESP32-S3
 
-- PCB là nguyên mẫu nghiên cứu, chưa phải thiết bị y tế được chứng nhận.
-- Khi điện cực đang gắn trên người, chỉ sử dụng nguồn và giải pháp cách ly phù hợp cho thiết bị đo tín hiệu sinh học.
-- Không kết nối đồng thời người đo với thiết bị USB, debugger hoặc máy đo tham chiếu lưới điện nếu hệ thống chưa có cách ly điện thích hợp.
-- Không sử dụng kết quả để tự chẩn đoán hoặc thay thế đánh giá của nhân viên y tế.
+Firmware được viết bằng C/C++ với PlatformIO và Arduino framework. Source firmware chưa nằm trong repository này, nhưng báo cáo tổ chức firmware thành các module:
 
-Tài liệu linh kiện:
+| Module | File trong firmware | Chức năng |
+| --- | --- | --- |
+| Main | `main.cpp`, `main.h` | Khởi tạo hệ thống, đọc ECG, tạo queue và task MQTT |
+| ADS1115 | `ads_1115.cpp/.h` | Cấu hình ADC, đọc DRDY và đổi raw ADC sang điện áp |
+| Moving Average | `moving_average.cpp/.h` | Làm mượt dạng sóng gửi lên ứng dụng |
+| Pan-Tompkins | `pantompskin.cpp`, `pan_tompskins.h` | Lọc số, đạo hàm, bình phương, tích phân và phát hiện đỉnh R |
+| HRV | `hrv.cpp/.h` | Lưu RR hợp lệ và tính SDNN, RMSSD |
+| MQTT | `mqtt_manager.cpp/.h` | Duy trì kết nối và publish payload JSON |
+| Wi-Fi | `wifi_manager.cpp/.h` | Kết nối và cấu hình Wi-Fi động |
 
-- [AD8232 Datasheet - Analog Devices](https://www.analog.com/media/en/technical-documentation/data-sheets/ad8232.pdf)
-- [ESP32-S3 Datasheet - Espressif](https://www.espressif.com/sites/default/files/documentation/esp32-s3_datasheet_en.pdf)
-- [ESP32-S3 ADC Continuous Mode - Espressif](https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/api-reference/peripherals/adc/adc_continuous.html)
+### Tham số xử lý
 
-## Công nghệ sử dụng
-
-| Thành phần | Công nghệ |
+| Tham số | Giá trị |
 | --- | --- |
-| Ứng dụng | Flutter, Dart |
-| Xác thực | Firebase Authentication, Google Sign-In |
-| Dữ liệu nghiệp vụ | Cloud Firestore |
-| Dữ liệu ECG/RR | Firebase Storage |
-| Dữ liệu thời gian thực | MQTT qua TLS (`mqtt_client`) |
+| Tần số lấy mẫu | 250 SPS |
+| Chế độ ADS1115 | Continuous conversion |
+| Kênh ADC | A0 |
+| Moving average | 10 mẫu |
+| Bộ lọc thông thấp Pan-Tompkins | Butterworth bậc 4, khoảng 11 Hz |
+| Bộ lọc thông cao Pan-Tompkins | Butterworth bậc 4, khoảng 5 Hz |
+| Cửa sổ tích phân `MWI_SIZE` | 38 mẫu, khoảng 152 ms |
+| Refractory period | 50 mẫu, khoảng 200 ms |
+| Khoảng RR hợp lệ | 300-1500 ms |
+| Batch MQTT | 25 mẫu, tương đương 0.1 giây |
+| FreeRTOS queue | 20 `EcgBatch` |
+| HRV window | 1000 khoảng RR |
+| Điều kiện HRV live trên firmware | Tối thiểu 300 khoảng RR hợp lệ |
 
-## Định dạng dữ liệu MQTT
+### Xử lý realtime
 
-Ứng dụng subscribe topic `ecg/data` với QoS 0. Payload là JSON và có cấu trúc:
+Vòng lặp lấy mẫu ưu tiên đọc ADS1115 theo cờ DRDY, xử lý tín hiệu và tạo batch. Khi đủ 25 mẫu, batch được đẩy vào queue; `MQTT_Task` nhận dữ liệu, kiểm tra broker và publish độc lập. Cách tách này tránh thao tác mạng hoặc reconnect MQTT làm gián đoạn chu kỳ lấy mẫu 250 Hz.
+
+Firmware sử dụng WiFiManager để lưu cấu hình mạng trong flash/NVS. Khi chưa có mạng hoặc kết nối thất bại, thiết bị mở captive portal để cấu hình Wi-Fi. Giữ nút BOOT khoảng 3 giây cho phép xóa cấu hình cũ và thiết lập lại mạng.
+
+## Ứng dụng Flutter
+
+Ứng dụng có ba nhóm chức năng chính:
+
+- **Tài khoản:** đăng ký, đăng nhập, Google Sign-In, quên mật khẩu và đăng xuất.
+- **Đo ECG:** kết nối MQTT, hiển thị 500 điểm gần nhất (khoảng 2 giây), HR/HRV và trạng thái phiên đo.
+- **Bệnh nhân:** thêm, sửa, xóa hồ sơ; lưu và xem lại dạng sóng cùng kết quả HRV của từng phiên.
+
+Khi kết thúc phiên đo, ứng dụng tính lại SDNN, RMSSD và IBI trung bình từ toàn bộ chuỗi RR/IBI. Code hiện yêu cầu phiên đo tối thiểu 5 phút và ít nhất 120 khoảng RR/IBI trước khi cho lưu đánh giá HRV cuối phiên.
+
+## Giao tiếp MQTT
+
+| Thuộc tính | Giá trị |
+| --- | --- |
+| Broker | HiveMQ Cloud |
+| Port | `8883` |
+| Bảo mật | TLS |
+| Topic | `ecg/data` |
+| QoS | 0 - at most once |
+| Payload | JSON, 25 mẫu ECG mỗi bản tin |
+
+Ví dụ payload:
 
 ```json
 {
-  "ecg": [0.12, 0.15, 0.18],
-  "hr": 72,
-  "ibi": 833,
-  "sdnn": 42.5,
-  "rmssd": 35.1
+  "ecg": [1.2345, 1.2360, 1.2401],
+  "hr": 72.0,
+  "sdnn": 75.6,
+  "rmssd": 84.5,
+  "ibi": 792.0
 }
 ```
 
-Trong đó:
+| Trường | Kiểu | Đơn vị/ý nghĩa |
+| --- | --- | --- |
+| `ecg` | `List<double>` | Các mẫu ECG đã lọc trung bình trượt |
+| `hr` | `double` | Nhịp tim hiện tại, BPM |
+| `sdnn` | `double` | SDNN tính từ chuỗi RR hợp lệ, ms |
+| `rmssd` | `double` | RMSSD tính từ sai khác RR liên tiếp, ms |
+| `ibi` | `double` | Khoảng RR/IBI mới nhất, ms |
 
-- `ecg`: một giá trị hoặc danh sách mẫu ECG; trường bắt buộc để vẽ tín hiệu.
-- `hr`: nhịp tim, đơn vị BPM.
-- `ibi`: khoảng thời gian giữa hai nhịp liên tiếp, đơn vị ms. Có thể gửi bằng khóa `rr` để tương thích dữ liệu cũ.
-- `sdnn`, `rmssd`: chỉ số HRV tạm thời; có thể bỏ qua nếu thiết bị không tính.
+## Firebase
 
-## Yêu cầu
+```text
+Firebase Authentication
+users/{uid}
+└── patients/{patientId}
+    └── recordings/{recordingId}
+```
+
+Metadata của bản ghi gồm HR, thời lượng, số mẫu, SDNN, RMSSD, IBI, thông tin đánh giá và đường dẫn file. Dữ liệu đầy đủ được lưu trên Firebase Storage:
+
+```text
+users/{uid}/patients/{patientId}/recordings/{recordingId}/ecg.json
+users/{uid}/patients/{patientId}/recordings/{recordingId}/rr.json
+```
+
+Việc tách metadata và file mẫu giúp tránh document Firestore quá lớn và thuận tiện khi tải lại bản ghi.
+
+## Kết quả kiểm thử trong đồ án
+
+- Các ca kiểm thử đăng nhập, Google Sign-In, quên mật khẩu, MQTT, hiển thị ECG, lưu/xem lại bản ghi và đăng xuất đều đạt kết quả mong đợi.
+- Thiết bị publish đúng topic và cấu trúc JSON; ứng dụng cập nhật đồ thị gần thời gian thực.
+- Trong phép đo đối chiếu, ứng dụng hiển thị khoảng **72 BPM**, tương đương vùng giá trị của smartwatch tại cùng thời điểm. Đây chỉ là so sánh tham khảo do hai thiết bị sử dụng nguyên lý đo khác nhau.
+- Với phiên đo khoảng 5 phút chứa 333 khoảng RR, ứng dụng tính **SDNN = 69.7 ms**, **RMSSD = 42.4 ms**, **IBI trung bình = 897.3 ms**. SDNN và RMSSD trùng với kết quả của công cụ HRV tham chiếu khi sử dụng cùng file `rr.json`.
+
+Các kết quả trên xác nhận luồng xử lý hoạt động đúng trong kịch bản thử nghiệm, không phải tuyên bố về độ chính xác lâm sàng.
+
+## Phạm vi repository
+
+Repository hiện chứa source ứng dụng Flutter và cấu hình Firebase. Các tài liệu/source sau được mô tả trong báo cáo nhưng chưa được đưa vào repository:
+
+- Firmware ESP32-S3/PlatformIO.
+- Schematic, PCB layout, BOM và Gerber.
+- Dữ liệu ECG/RR dùng trong kiểm thử.
+
+### Cấu trúc source Flutter
+
+```text
+lib/
+├── main.dart                 # Khởi tạo Firebase và ứng dụng
+├── models/                   # User, patient và ECG recording models
+├── screens/                  # Đăng nhập, đo ECG và quản lý bệnh nhân
+├── services/                 # Authentication, MQTT, Firestore và Storage
+├── utils/                    # Khoảng tham chiếu và đánh giá HRV
+└── widgets/                  # CustomPainter hiển thị ECG
+```
+
+## Cài đặt ứng dụng
+
+### Yêu cầu
 
 - Flutter SDK tương thích với Dart `^3.11.1`.
 - Android Studio hoặc Xcode nếu chạy trên thiết bị di động.
 - JDK 17 khi build Android.
-- PCB đo ECG tự thiết kế sử dụng ESP32-S3 và AD8232.
-- Firmware ESP32-S3 được cấu hình lấy mẫu 250 Hz, kết nối Wi-Fi và publish MQTT.
-- Một Firebase project đã bật Authentication, Cloud Firestore và Storage.
-- Một MQTT broker và thiết bị publish đúng định dạng dữ liệu phía trên.
+- Firebase project đã bật Authentication, Cloud Firestore và Storage.
+- MQTT broker và ECG Device publish đúng payload nêu trên.
 
-## Cài đặt và chạy
-
-### 1. Clone repository
+### Chạy project
 
 ```bash
 git clone https://github.com/quochuyii1305/data_version2.git
 cd data_version2
-```
-
-### 2. Cài dependency
-
-```bash
 flutter pub get
+flutter run
 ```
 
-### 3. Cấu hình Firebase
-
-Repository đã có cấu hình cho Android, iOS, macOS, Windows và Web. Nếu sử dụng Firebase project khác, hãy tạo lại cấu hình bằng FlutterFire CLI:
+Nếu sử dụng Firebase project khác:
 
 ```bash
 flutterfire configure
 ```
 
-Sau đó:
+Sau đó bật Email/Password, cấu hình Google Sign-In, tạo Firestore/Storage và thiết lập Security Rules. Linux hiện chưa được cấu hình trong `firebase_options.dart`.
 
-- Bật phương thức Email/Password trong Firebase Authentication.
-- Cấu hình Google Sign-In nếu cần sử dụng đăng nhập Google.
-- Tạo Firestore database và Firebase Storage.
-- Thiết lập Security Rules phù hợp trước khi triển khai thực tế.
+### Cấu hình MQTT của ứng dụng
 
-Linux hiện chưa được cấu hình trong `firebase_options.dart`.
-
-### 4. Cấu hình MQTT
-
-Các thông số broker đang nằm trong `MqttConfig` tại `lib/services/mqtt_service.dart`:
+Thông số broker nằm trong `MqttConfig` tại `lib/services/mqtt_service.dart`:
 
 ```dart
 class MqttConfig {
@@ -164,83 +249,34 @@ class MqttConfig {
 }
 ```
 
-Mỗi client kết nối đồng thời nên có `clientId` riêng để tránh broker ngắt kết nối client cũ.
+Mỗi client kết nối đồng thời phải có `clientId` riêng. Không commit credential thật vào repository công khai; cần thay thông tin đã từng bị lộ và chuyển secret sang cấu hình build/runtime trước khi triển khai.
 
-Không commit username, password hoặc token thật vào repository công khai. Với môi trường production, nên chuyển cấu hình nhạy cảm sang biến build/runtime hoặc một cơ chế quản lý secret phù hợp và thay thông tin đăng nhập đã từng bị lộ.
-
-### 5. Chạy ứng dụng
-
-```bash
-flutter run
-```
-
-Liệt kê thiết bị khả dụng:
-
-```bash
-flutter devices
-```
-
-Chạy trên thiết bị cụ thể:
-
-```bash
-flutter run -d <device-id>
-```
-
-## Quy trình đo ECG/HRV
-
-1. Đăng nhập hoặc tạo tài khoản.
-2. Cấp nguồn an toàn cho PCB, gắn điện cực và khởi động firmware ESP32-S3.
-3. Đảm bảo ESP32-S3 đã kết nối Wi-Fi và publish dữ liệu lên MQTT broker.
-4. Kết nối MQTT broker ở tab Trang chủ.
-5. Mở tab Đo và bắt đầu nhận tín hiệu ECG.
-6. Đo tối thiểu 5 phút và thu được ít nhất 120 khoảng RR/IBI để lưu đánh giá HRV cuối phiên.
-7. Chọn bệnh nhân có sẵn hoặc tạo hồ sơ mới.
-8. Lưu kết quả và xem lại trong tab Bệnh nhân.
-
-## Cấu trúc dữ liệu Firebase
-
-```text
-users/{uid}
-└── patients/{patientId}
-    └── recordings/{recordingId}
-```
-
-Các file mẫu được lưu trên Firebase Storage:
-
-```text
-users/{uid}/patients/{patientId}/recordings/{recordingId}/ecg.json
-users/{uid}/patients/{patientId}/recordings/{recordingId}/rr.json
-```
-
-## Cấu trúc source code
-
-```text
-lib/
-├── main.dart                 # Khởi tạo Firebase và ứng dụng
-├── models/                   # User, patient và ECG recording models
-├── screens/                  # Màn hình đăng nhập, đo và quản lý bệnh nhân
-├── services/                 # Authentication, MQTT, Firestore và Storage
-├── utils/                    # Khoảng tham chiếu và đánh giá HRV
-└── widgets/                  # Thành phần giao diện, ECG painter
-```
-
-## Kiểm tra chất lượng
+## Kiểm tra source
 
 ```bash
 flutter analyze
 flutter test
-```
-
-Định dạng source code:
-
-```bash
 dart format lib test
 ```
 
-## Lưu ý khi phát triển
+## An toàn và giới hạn
 
-- Không coi một MQTT message là một phiên đo hoàn chỉnh; ứng dụng ghép nhiều mẫu vào buffer theo thời gian.
-- Kiểm tra đơn vị ECG, HR và RR/IBI giữa firmware với ứng dụng trước khi đánh giá kết quả.
-- Không lưu trực tiếp secret trong source code.
-- Luôn kiểm tra Firebase Security Rules trước khi đưa ứng dụng lên môi trường thực tế.
-- Khi thay đổi schema Firestore hoặc JSON MQTT, cần cập nhật đồng thời model, service và firmware gửi dữ liệu.
+- Không gắn điện cực lên người khi PCB đang nối với USB, debugger, oscilloscope hoặc thiết bị tham chiếu lưới điện nếu chưa có cách ly điện đáp ứng yêu cầu an toàn.
+- Nguyên mẫu chưa được kiểm chuẩn với thiết bị ECG y tế và chưa đáp ứng tiêu chuẩn thiết bị y sinh.
+- HR/HRV phụ thuộc chất lượng tiếp xúc điện cực, chuyển động, nhiễu nguồn, thời lượng đo và độ chính xác phát hiện đỉnh R.
+- Cần đo định lượng thêm độ trễ, tỷ lệ mất gói MQTT và độ chính xác trên nhiều người dùng/dữ liệu chuẩn.
+
+## Hướng phát triển
+
+- Cải thiện lọc nhiễu nguồn, trôi đường nền và nhiễu chuyển động.
+- Bổ sung cơ chế tìm lại QRS bị bỏ sót và kiểm chuẩn với thiết bị/dataset ECG chuẩn.
+- Thêm cảnh báo tín hiệu bất thường hoặc nhịp tim vượt ngưỡng.
+- Tính thêm pNN50 và các chỉ số HRV miền tần số.
+- Xây dựng dashboard web/backend riêng để quản lý nhiều thiết bị và bệnh nhân.
+- Hoàn thiện Firebase Security Rules và quản lý credential an toàn.
+
+## Tài liệu linh kiện
+
+- [ESP32-S3 Datasheet - Espressif](https://www.espressif.com/sites/default/files/documentation/esp32-s3_datasheet_en.pdf)
+- [ADS1115 Datasheet - Texas Instruments](https://www.ti.com/lit/ds/symlink/ads1115.pdf)
+- [AD8232 Datasheet - Analog Devices](https://www.analog.com/media/en/technical-documentation/data-sheets/ad8232.pdf)

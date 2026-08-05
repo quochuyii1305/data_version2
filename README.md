@@ -4,15 +4,6 @@
 
 > Hệ thống là nguyên mẫu phục vụ học tập và nghiên cứu, chưa phải thiết bị y tế được chứng nhận và không được sử dụng để tự chẩn đoán.
 
-## Thông tin đồ án
-
-| Nội dung | Thông tin |
-| --- | --- |
-| Sinh viên thực hiện | Vũ Quốc Huy |
-| Mã số sinh viên | 20224010 |
-| Giảng viên hướng dẫn | PGS. Hoàng Mạnh Thắng |
-| Đơn vị | Trường Điện - Điện tử, Đại học Bách khoa Hà Nội |
-| Năm hoàn thành | 2026 |
 
 ## Chức năng chính
 

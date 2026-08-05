@@ -1,11 +1,12 @@
 # Heart Protect
 
-Heart Protect là ứng dụng Flutter theo dõi tín hiệu điện tâm đồ (ECG) và biến thiên nhịp tim (HRV). Ứng dụng nhận dữ liệu thời gian thực từ thiết bị đo (ví dụ ESP32) qua MQTT/TLS, hiển thị dạng sóng ECG, quản lý hồ sơ bệnh nhân và lưu lịch sử đo trên Firebase.
+Heart Protect là hệ thống theo dõi tín hiệu điện tâm đồ (ECG) và biến thiên nhịp tim (HRV), gồm PCB đo ECG tự thiết kế sử dụng ESP32-S3 và AD8232 cùng ứng dụng Flutter. PCB thu nhận, xử lý và gửi dữ liệu qua MQTT/TLS; ứng dụng hiển thị dạng sóng ECG, quản lý hồ sơ bệnh nhân và lưu lịch sử đo trên Firebase.
 
 > Dự án phục vụ mục đích học tập và nghiên cứu. Kết quả hiển thị không thay thế chẩn đoán hoặc thiết bị y tế chuyên dụng.
 
 ## Chức năng chính
 
+- Thu nhận ECG bằng PCB tự thiết kế tích hợp ESP32-S3 và AD8232.
 - Đăng ký, đăng nhập bằng email/mật khẩu hoặc Google và đặt lại mật khẩu.
 - Kết nối MQTT broker qua TLS và theo dõi trạng thái kết nối.
 - Nhận, giải mã và hiển thị tín hiệu ECG theo thời gian thực.
@@ -19,18 +20,60 @@ Heart Protect là ứng dụng Flutter theo dõi tín hiệu điện tâm đồ 
 ## Luồng dữ liệu
 
 ```text
-ESP32/cảm biến ECG
-        |
-        | JSON qua MQTT/TLS
-        v
+Điện cực ECG
+      |
+      v
+AD8232 trên PCB tự thiết kế
+  (thu nhận và xử lý analog)
+      |
+      v
+ESP32-S3
+  (ADC 250 Hz, xử lý ECG/HRV)
+      |
+      | Wi-Fi - JSON qua MQTT/TLS
+      v
 HiveMQ Cloud (topic: ecg/data)
-        |
-        v
+      |
+      v
 Flutter app -> Đồ thị ECG + HR/HRV
-        |
-        +-> Cloud Firestore: người dùng, bệnh nhân, metadata bản ghi
-        +-> Firebase Storage: ecg.json, rr.json
+      |
+      +-> Cloud Firestore: người dùng, bệnh nhân, metadata bản ghi
+      +-> Firebase Storage: ecg.json, rr.json
 ```
+
+## Phần cứng
+
+Phần đo ECG không sử dụng một bộ kit hoàn chỉnh có sẵn mà được xây dựng trên PCB thiết kế riêng cho dự án.
+
+| Khối | Vai trò |
+| --- | --- |
+| Điện cực ECG | Thu tín hiệu điện thế sinh học từ người đo |
+| AD8232 | Khối analog front-end dùng để thu nhận, khuếch đại và lọc tín hiệu ECG trước khi đưa vào ADC |
+| ESP32-S3 | Lấy mẫu ngõ ra AD8232 bằng ADC, xử lý dữ liệu và truyền qua Wi-Fi/MQTT |
+| PCB tự thiết kế | Tích hợp các khối xử lý, analog, nguồn và kết nối của hệ thống |
+
+Firmware phía ESP32-S3 thực hiện các nhiệm vụ chính:
+
+- Lấy mẫu ECG với tần số 250 Hz.
+- Gom các mẫu ECG thành từng nhóm để gửi; ứng dụng hiện hỗ trợ payload chứa khoảng 25 mẫu mỗi lần.
+- Xác định nhịp tim và khoảng RR/IBI.
+- Tính các chỉ số HRV tạm thời như SDNN và RMSSD.
+- Đóng gói dữ liệu JSON rồi publish lên topic `ecg/data` qua MQTT/TLS.
+
+Repository hiện chứa source của ứng dụng Flutter. Schematic, PCB layout, BOM, Gerber, pin mapping và firmware ESP32-S3 chưa được lưu trong repository này, vì vậy README chỉ mô tả kiến trúc phần cứng ở mức hệ thống và không giả định sơ đồ chân.
+
+### An toàn thử nghiệm
+
+- PCB là nguyên mẫu nghiên cứu, chưa phải thiết bị y tế được chứng nhận.
+- Khi điện cực đang gắn trên người, chỉ sử dụng nguồn và giải pháp cách ly phù hợp cho thiết bị đo tín hiệu sinh học.
+- Không kết nối đồng thời người đo với thiết bị USB, debugger hoặc máy đo tham chiếu lưới điện nếu hệ thống chưa có cách ly điện thích hợp.
+- Không sử dụng kết quả để tự chẩn đoán hoặc thay thế đánh giá của nhân viên y tế.
+
+Tài liệu linh kiện:
+
+- [AD8232 Datasheet - Analog Devices](https://www.analog.com/media/en/technical-documentation/data-sheets/ad8232.pdf)
+- [ESP32-S3 Datasheet - Espressif](https://www.espressif.com/sites/default/files/documentation/esp32-s3_datasheet_en.pdf)
+- [ESP32-S3 ADC Continuous Mode - Espressif](https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/api-reference/peripherals/adc/adc_continuous.html)
 
 ## Công nghệ sử dụng
 
@@ -41,7 +84,6 @@ Flutter app -> Đồ thị ECG + HR/HRV
 | Dữ liệu nghiệp vụ | Cloud Firestore |
 | Dữ liệu ECG/RR | Firebase Storage |
 | Dữ liệu thời gian thực | MQTT qua TLS (`mqtt_client`) |
-
 
 ## Định dạng dữ liệu MQTT
 
@@ -69,6 +111,8 @@ Trong đó:
 - Flutter SDK tương thích với Dart `^3.11.1`.
 - Android Studio hoặc Xcode nếu chạy trên thiết bị di động.
 - JDK 17 khi build Android.
+- PCB đo ECG tự thiết kế sử dụng ESP32-S3 và AD8232.
+- Firmware ESP32-S3 được cấu hình lấy mẫu 250 Hz, kết nối Wi-Fi và publish MQTT.
 - Một Firebase project đã bật Authentication, Cloud Firestore và Storage.
 - Một MQTT broker và thiết bị publish đúng định dạng dữ liệu phía trên.
 
@@ -145,11 +189,13 @@ flutter run -d <device-id>
 ## Quy trình đo ECG/HRV
 
 1. Đăng nhập hoặc tạo tài khoản.
-2. Kết nối MQTT broker ở tab Trang chủ.
-3. Mở tab Đo và bắt đầu nhận tín hiệu ECG.
-4. Đo tối thiểu 5 phút và thu được ít nhất 120 khoảng RR/IBI để lưu đánh giá HRV cuối phiên.
-5. Chọn bệnh nhân có sẵn hoặc tạo hồ sơ mới.
-6. Lưu kết quả và xem lại trong tab Bệnh nhân.
+2. Cấp nguồn an toàn cho PCB, gắn điện cực và khởi động firmware ESP32-S3.
+3. Đảm bảo ESP32-S3 đã kết nối Wi-Fi và publish dữ liệu lên MQTT broker.
+4. Kết nối MQTT broker ở tab Trang chủ.
+5. Mở tab Đo và bắt đầu nhận tín hiệu ECG.
+6. Đo tối thiểu 5 phút và thu được ít nhất 120 khoảng RR/IBI để lưu đánh giá HRV cuối phiên.
+7. Chọn bệnh nhân có sẵn hoặc tạo hồ sơ mới.
+8. Lưu kết quả và xem lại trong tab Bệnh nhân.
 
 ## Cấu trúc dữ liệu Firebase
 

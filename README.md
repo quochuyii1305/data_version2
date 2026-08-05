@@ -4,7 +4,6 @@
 
 > Hệ thống là nguyên mẫu phục vụ học tập và nghiên cứu, chưa phải thiết bị y tế được chứng nhận và không được sử dụng để tự chẩn đoán.
 
-
 ## Chức năng chính
 
 - Thu nhận tín hiệu ECG từ ba điện cực RA, LA, RL bằng module AD8232.
@@ -44,6 +43,20 @@ Luồng xử lý dữ liệu:
 ## Phần cứng ECG Device
 
 Thiết bị được triển khai trên **PCB hai lớp tự thiết kế**. ESP32-S3, ADS1115, nguồn, USB và các linh kiện phụ được tích hợp trên PCB; AD8232 là module có sẵn duy nhất được cắm vào header của mạch để giảm rủi ro ở khối analog trong giai đoạn nguyên mẫu.
+
+### Schematic tổng thể
+
+<p align="center">
+  <img src="docs/images/hardware/ecg-device-schematic.png" alt="Schematic tổng thể của ECG Device" width="100%">
+</p>
+
+Schematic thể hiện các khối USB Type-C, nguồn 5 V/3.3 V, ESP32-S3, BOOT/RESET và ADS1115 kết nối với module AD8232.
+
+### Mô hình PCB 3D
+
+<p align="center">
+  <img src="docs/images/hardware/pcb-3d.png" alt="Mô hình 3D PCB của ECG Device" width="600">
+</p>
 
 ### Thành phần chính
 

@@ -41,7 +41,7 @@ Flutter app -> Đồ thị ECG + HR/HRV
 | Dữ liệu nghiệp vụ | Cloud Firestore |
 | Dữ liệu ECG/RR | Firebase Storage |
 | Dữ liệu thời gian thực | MQTT qua TLS (`mqtt_client`) |
-| Lưu trữ cục bộ | SQLite (`sqflite`) |
+
 
 ## Định dạng dữ liệu MQTT
 

@@ -52,7 +52,7 @@ Thiết bị được triển khai trên **PCB hai lớp tự thiết kế**. ES
 
 Schematic thể hiện các khối USB Type-C, nguồn 5 V/3.3 V, ESP32-S3, BOOT/RESET và ADS1115 kết nối với module AD8232.
 
-### Mô hình PCB 3D
+### PCB 3D
 
 <p align="center">
   <img src="docs/images/hardware/pcb-3d.png" alt="Mô hình 3D PCB của ECG Device" width="600">

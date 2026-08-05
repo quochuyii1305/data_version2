@@ -177,14 +177,6 @@ Việc tách metadata và file mẫu giúp tránh document Firestore quá lớn 
 
 Các kết quả trên xác nhận luồng xử lý hoạt động đúng trong kịch bản thử nghiệm, không phải tuyên bố về độ chính xác lâm sàng.
 
-## Phạm vi repository
-
-Repository hiện chứa source ứng dụng Flutter và cấu hình Firebase. Các tài liệu/source sau được mô tả trong báo cáo nhưng chưa được đưa vào repository:
-
-- Firmware ESP32-S3/PlatformIO.
-- Schematic, PCB layout, BOM và Gerber.
-- Dữ liệu ECG/RR dùng trong kiểm thử.
-
 ### Cấu trúc source Flutter
 
 ```text
